@@ -332,4 +332,19 @@ trait QueriesRelationships
     {
         return ($operator === '>=' || $operator === '<') && $count === 1;
     }
+
+    /**
+     * Specify which relations to load for a given morph type.
+     *
+     * @param array $with
+     * @return $this
+     */
+    public function morphWith(array $with)
+    {
+        $this->morphableEagerLoads = array_merge(
+            $this->morphableEagerLoads, $with
+        );
+
+        return $this;
+    }
 }
