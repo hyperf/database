@@ -32,6 +32,7 @@ use Hyperf\Utils\Str;
 use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
+use PhpParser\Node\{Expr, Stmt\Return_};
 use Roave\BetterReflection\BetterReflection;
 use Roave\BetterReflection\Reflection\ReflectionClass;
 use Roave\BetterReflection\Reflection\ReflectionMethod;
@@ -53,6 +54,23 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
         'morphMany' => MorphMany::class,
         'morphToMany' => MorphToMany::class,
         'morphedByMany' => MorphToMany::class,
+    ];
+
+    const DOC_CONTENT_TPL = [
+        'SETTER' => '
+/**
+ * Method to set the value of field %COLUMN%
+ *
+ * @param %TYPE% $%COLUMN%
+ * @return $this
+ */
+                 ',
+        'GETTER' => '
+/**
+ * Returns the value of field %COLUMN%
+ *
+ * @return %TYPE%
+ */',
     ];
 
     /**
@@ -95,6 +113,9 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
         $this->class = new $class();
         $this->columns = $columns;
         $this->option = $option;
+        
+
+
         $this->initPropertiesFromMethods();
     }
 
@@ -111,7 +132,37 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
             case $node instanceof Node\Stmt\Class_:
                 $node->setDocComment(new Doc($this->parseProperty()));
                 return $node;
+            case $node instanceof Node\Stmt\ClassMethod:
+                $node = $this->rewriteMethodDoc($node);
+                return $node;
         }
+    }
+
+    protected function rewriteMethodDoc(Node\Stmt\ClassMethod $node)
+    {
+        if (Str::startsWith($node->name->name, 'set'))
+        {
+            $propertyName = lcfirst(Str::replaceFirst("set", '', $node->name->name));
+            $columnName = Str::snake($propertyName);
+            $column = $this->getColumn($columnName);
+            [$name, $type, $comments] = $this->getProperty($column);
+            $strDoc = str_replace('%COLUMN%', $columnName, self::DOC_CONTENT_TPL['SETTER']);
+            $strDoc = str_replace('%TYPE%', $type, $strDoc);
+            $node->setDocComment(new Doc($strDoc));
+        }
+        else if (Str::startsWith($node->name->name, 'get'))
+        {
+            $propertyName = lcfirst(Str::replaceFirst("get", '', $node->name->name));
+            $columnName = Str::snake($propertyName);
+            $column = $this->getColumn($columnName);
+            [$name, $type, $comments] = $this->getProperty($column);
+            $strDoc = str_replace('%COLUMN%', $columnName, self::DOC_CONTENT_TPL['GETTER']);
+            $strDoc = str_replace('%TYPE%', $type, $strDoc);
+            $node->setDocComment(new Doc($strDoc));
+        }
+
+        return $node;
+
     }
 
     protected function rewriteFillable(Node\Stmt\PropertyProperty $node): Node\Stmt\PropertyProperty
@@ -342,6 +393,17 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
             $this->methods[$name] = [];
             $this->methods[$name]['type'] = implode('|', $type);
             $this->methods[$name]['arguments'] = $arguments;
+        }
+    }
+
+    protected function getColumn($columnName)
+    {
+        foreach ($this->columns as $column)
+        {
+            if ($column['column_name'] == $columnName)
+            {
+                return $column;
+            }
         }
     }
 

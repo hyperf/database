@@ -22,6 +22,7 @@ use Hyperf\Utils\CodeGen\Project;
 use Hyperf\Utils\Str;
 use PhpParser\NodeTraverser;
 use PhpParser\ParserFactory;
+use PhpParser\BuilderFactory;
 use PhpParser\PrettyPrinter\Standard;
 use Psr\Container\ContainerInterface;
 use Symfony\Component\Console\Input\InputArgument;
@@ -29,6 +30,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use PhpParser\Node\{Expr, Stmt\Return_};
 
 class ModelCommand extends Command
 {
@@ -100,7 +102,8 @@ class ModelCommand extends Command
             ->setIgnoreTables($this->getOption('ignore-tables', 'commands.gen:model.ignore_tables', $pool, []))
             ->setWithComments($this->getOption('with-comments', 'commands.gen:model.with_comments', $pool, false))
             ->setVisitors($this->getOption('visitors', 'commands.gen:model.visitors', $pool, []))
-            ->setPropertyCase($this->getOption('property-case', 'commands.gen:model.property_case', $pool));
+            ->setPropertyCase($this->getOption('property-case', 'commands.gen:model.property_case', $pool))
+            ->setIsGetSet($this->getOption('get-set', 'commands.gen:model.get_set', $pool, false));
 
         if ($table) {
             $this->createModel($table, $option);
@@ -125,6 +128,7 @@ class ModelCommand extends Command
         $this->addOption('with-comments', null, InputOption::VALUE_NONE, 'Whether generate the property comments for model.');
         $this->addOption('visitors', null, InputOption::VALUE_OPTIONAL | InputOption::VALUE_IS_ARRAY, 'Custom visitors for ast traverser.');
         $this->addOption('property-case', null, InputOption::VALUE_OPTIONAL, 'Which property case you want use, 0: snake case, 1: camel case.');
+        $this->addOption('get-set', null, InputOption::VALUE_OPTIONAL, 'Generate setter and getter methods for properties');
     }
 
     protected function getSchemaBuilder(string $poolName): MySqlBuilder
@@ -167,8 +171,9 @@ class ModelCommand extends Command
         $columns = $this->formatColumns($builder->getColumnTypeListing($table));
 
         $project = new Project();
-        $class = $option->getTableMapping()[$table] ?? Str::studly(Str::singular($table));
-        $class = $project->namespace($option->getPath()) . $class;
+        $classWithoutNamespace = $option->getTableMapping()[$table] ?? Str::studly(Str::singular($table));
+
+        $class = $project->namespace($option->getPath()) . $classWithoutNamespace;
         $path = BASE_PATH . '/' . $project->path($class);
 
         if (! file_exists($path)) {
@@ -181,7 +186,54 @@ class ModelCommand extends Command
 
         $columns = $this->getColumns($class, $columns, $option->isForceCasts());
 
-        $stms = $this->astParser->parse(file_get_contents($path));
+        $factory = new BuilderFactory;
+
+        $contentStms = $factory->class($classWithoutNamespace)->extend('Model')
+            ->addStmt(
+                $factory->property('table')->setDefault($table)
+                    ->setDocComment('/**
+     * The table associated with the model.
+     *
+     * @var string
+     */')->makeProtected())->addStmt($factory->property('connection')->setDocComment('/**
+     * The connection name for the model.
+     *
+     * @var string
+     */')->setDefault($option->getPool())->makeProtected()
+            )
+            ->addStmt($factory->property('fillable')->setDefault([])->makeProtected()->setDocComment('/**
+     * The attributes that are mass assignable.
+     *
+     * @var array
+     */'))
+            ->addStmt($factory->property('casts')->setDefault([])->makeProtected()->setDocComment('/**
+     * The attributes that should be cast to native types.
+     *
+     * @var array
+     */'));
+
+        if ($option->getIsGetSet()) {
+
+            // 生成setter和getter
+            foreach ($columns as $column)
+            {
+                $contentStms->addStmt(
+                    $factory->method('set' . ucfirst(str::camel($column['column_name'])))
+                        ->addParam($factory->param($column['column_name']))->makePublic()->addStmt(
+                            new Expr\Variable('this->' . $column['column_name'] . ' = ' . '$'.$column['column_name'])
+                        )->addStmt(new Return_(new Expr\Variable('this'))))
+                    ->addStmt(
+                    $factory->method('get' . ucfirst(Str::camel($column['column_name'])))->addStmt(
+                        new Return_(new Expr\Variable('this->' . $column['column_name']))
+                    )->makePublic()
+                            );
+            }
+        }
+
+        $stms = $factory->namespace('App\Model')
+            ->addStmt($contentStms)->getNode();
+
+
         $traverser = new NodeTraverser();
         $traverser->addVisitor(make(ModelUpdateVisitor::class, [
             'class' => $class,
@@ -193,7 +245,8 @@ class ModelCommand extends Command
             $data = make(ModelData::class)->setClass($class)->setColumns($columns);
             $traverser->addVisitor(make($visitorClass, [$option, $data]));
         }
-        $stms = $traverser->traverse($stms);
+
+        $stms = $traverser->traverse(array($stms));
         $code = $this->printer->prettyPrintFile($stms);
 
         file_put_contents($path, $code);
@@ -236,6 +289,7 @@ class ModelCommand extends Command
     protected function getOption(string $name, string $key, string $pool = 'default', $default = null)
     {
         $result = $this->input->getOption($name);
+
         $nonInput = null;
         if (in_array($name, ['force-casts', 'refresh-fillable', 'with-comments'])) {
             $nonInput = false;
