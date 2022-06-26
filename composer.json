@@ -2,6 +2,7 @@
     "name": "bostin/hyperf-database",
     "description": "A flexible database library.",
     "license": "MIT",
+    "version": "v2.2.33.1",
     "keywords": [
         "php",
         "hyperf",
