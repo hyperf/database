@@ -80,7 +80,7 @@ class Builder
      * @var array
      */
     protected $passthru = [
-        'insert', 'insertGetId', 'getBindings', 'toSql',
+        'insert', 'insertGetId', 'replace', 'replaceGetId', 'getBindings', 'toSql',
         'exists', 'doesntExist', 'count', 'min', 'max', 'avg', 'average', 'sum', 'getConnection',
     ];
 

@@ -608,6 +608,73 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     }
 
     /**
+     * @param array $options
+     * @return bool
+     */
+    public function replace(array $options = [])
+    {
+        $this->mergeAttributesFromClassCasts();
+
+        $query = $this->newModelQuery();
+
+        $saved = $this->performReplace($query);
+
+        if (! $this->getConnectionName() && $connection = $query->getConnection()) {
+            $this->setConnection($connection->getName());
+        }
+
+        if ($saved) {
+            $this->finishSave($options);
+        }
+        return $saved;
+    }
+
+    protected function performReplace(Builder $query)
+    {
+        if ($event = $this->fireModelEvent('replacing')) {
+            if ($event instanceof StoppableEventInterface && $event->isPropagationStopped()) {
+                return false;
+            }
+        }
+
+        // First we'll need to create a fresh query instance and touch the creation and
+        // update timestamps on this model, which are maintained by us for developer
+        // convenience. After, we will just continue saving these model instances.
+        if ($this->usesTimestamps()) {
+            $this->updateTimestamps();
+        }
+
+        // If the model has an incrementing key, we can use the "insertGetId" method on
+        // the query builder, which will give us back the final inserted ID for this
+        // table from the database. Not all tables have to be incrementing though.
+        $attributes = $this->getAttributes();
+
+        if ($this->getIncrementing()) {
+            $this->replaceAndSetId($query, $attributes);
+        }
+
+        // If the table isn't incrementing we'll simply insert these attributes as they
+        // are. These attribute arrays must contain an "id" column previously placed
+        // there by the developer as the manually determined key for these models.
+        else {
+            if (empty($attributes)) {
+                return true;
+            }
+
+            $query->replace($attributes);
+        }
+
+        // We will go ahead and set the exists property to true, so that it is set when
+        // the created event is fired, just in case the developer tries to update it
+        // during the event. This will allow them to do so and run an update here.
+        $this->exists = true;
+
+        $this->fireModelEvent('replaced');
+
+        return true;
+    }
+
+    /**
      * Destroy the models for the given IDs.
      *
      * @param array|\Hyperf\Utils\Collection|int $ids
@@ -1434,6 +1501,19 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $this->fireModelEvent('created');
 
         return true;
+    }
+
+    /**
+     * Insert the given attributes and set the ID on the model.
+     *
+     * @param \Hyperf\Database\Model\Builder $query
+     * @param array $attributes
+     */
+    protected function replaceAndSetId(Builder $query, $attributes)
+    {
+        $id = $query->replaceGetId($attributes, $keyName = $this->getKeyName());
+
+        $this->setAttribute($keyName, $id);
     }
 
     /**

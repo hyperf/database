@@ -1,5 +1,5 @@
 {
-    "name": "hyperf/database",
+    "name": "bostin/hyperf-database",
     "description": "A flexible database library.",
     "license": "MIT",
     "keywords": [

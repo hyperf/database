@@ -2266,6 +2266,56 @@ class Builder
     }
 
     /**
+     * Insert a new record into the database.
+     *
+     * @return bool
+     */
+    public function replace(array $values)
+    {
+        // Since every insert gets treated like a batch insert, we will make sure the
+        // bindings are structured in a way that is convenient when building these
+        // inserts statements by verifying these elements are actually an array.
+        if (empty($values)) {
+            return true;
+        }
+
+        if (! is_array(reset($values))) {
+            $values = [$values];
+        }
+
+        // Here, we will sort the insert keys for every record so that each insert is
+        // in the same order for the record. We need to make sure this is the case
+        // so there are not any errors or problems when inserting these records.
+        else {
+            foreach ($values as $key => $value) {
+                ksort($value);
+
+                $values[$key] = $value;
+            }
+        }
+
+        // Finally, we will run this query against the database connection and return
+        // the results. We will need to also flatten these bindings before running
+        // the query so they are all in one huge, flattened array for execution.
+        return $this->connection->statement($this->grammar->compileReplace($this, $values), $this->cleanBindings(Arr::flatten($values, 1)));
+    }
+
+    /**
+     * Insert a new record and get the value of the primary key.
+     *
+     * @param null|string $sequence
+     * @return int
+     */
+    public function replaceGetId(array $values, $sequence = null)
+    {
+        $sql = $this->grammar->compileReplaceGetId($this, $values, $sequence);
+
+        $values = $this->cleanBindings($values);
+
+        return $this->processor->processReplaceGetId($this, $sql, $values, $sequence);
+    }
+
+    /**
      * Update a record in the database.
      *
      * @return int
